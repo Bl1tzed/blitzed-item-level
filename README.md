@@ -7,7 +7,6 @@ above the weapon slots — on your own character and on inspected players.
 
 - `ILVL: 285.00` label above the weapon slots on the character frame.
 - The same label on the inspect frame when examining other players.
-- `/bil` slash command to print your item level to chat.
 
 ## Installation
 
@@ -21,8 +20,4 @@ above the weapon slots — on your own character and on inspected players.
 - Open your character frame (default `C`) — the item level appears above your
   weapons.
 - Right-click another player and choose **Inspect** to see their item level.
-- Type `/bil` in chat for a quick readout.
-
-## Development
-
-See [CLAUDE.md](CLAUDE.md) for project structure and developer notes.
+- Type `/bil` or `/blitzeditemlevel` in chat for a quick readout.

@@ -9,6 +9,18 @@ local addonName, addon = ...
 local ilvlCache = {}
 local pendingUnit, pendingGUID
 
+-- Inside instanced content (Midnight 12.0) a tooltip's unit token can be a
+-- "secret value": the game engine refuses to pass it to unit API from addon
+-- (tainted) code and raises an error. safeUnitCall runs such a query under
+-- pcall and returns nil instead of erroring, so a secret unit simply makes the
+-- tooltip line not appear rather than crashing the tooltip.
+local function safeUnitCall(fn, ...)
+	local ok, a, b, c = pcall(fn, ...)
+	if ok then
+		return a, b, c
+	end
+end
+
 -- Adds the item level line to a unit tooltip when the module allows it.
 local function OnTooltipSetUnit(tooltip)
 	if tooltip ~= GameTooltip then
@@ -19,7 +31,13 @@ local function OnTooltipSetUnit(tooltip)
 	end
 
 	local _, unit = tooltip:GetUnit()
-	if not unit or not UnitIsPlayer(unit) then
+	if not unit then
+		return
+	end
+	-- UnitIsPlayer is the first unit query: if it errors the unit is a secret
+	-- value (instanced content), so bail out. If it succeeds the unit is plain
+	-- and the remaining unit API calls below are safe to use directly.
+	if not safeUnitCall(UnitIsPlayer, unit) then
 		return
 	end
 
@@ -60,7 +78,7 @@ listener:SetScript("OnEvent", function(_, _, guid)
 		if ilvl and ilvl > 0 then
 			ilvlCache[pendingGUID] = ilvl
 			local _, ttUnit = GameTooltip:GetUnit()
-			if ttUnit and UnitGUID(ttUnit) == pendingGUID then
+			if ttUnit and safeUnitCall(UnitGUID, ttUnit) == pendingGUID then
 				GameTooltip:SetUnit(ttUnit)
 			end
 		end
