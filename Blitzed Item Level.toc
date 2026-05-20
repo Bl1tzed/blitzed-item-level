@@ -1,0 +1,14 @@
+## Interface: 120005
+## Title: Blitzed Item Level
+## Notes: Displays your average item level on the character frame, inspect frame and tooltips. Configure with /bil.
+## Author: Blitzed
+## Version: 0.1.0
+## SavedVariables: BlitzedItemLevelDB
+## IconTexture: Interface\ICONS\INV_Misc_EngGizmos_27
+
+Core.lua
+CharacterFrame.lua
+InspectFrame.lua
+BagItems.lua
+Tooltip.lua
+Settings.lua
