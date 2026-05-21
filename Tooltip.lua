@@ -22,36 +22,29 @@ local function safeUnitCall(fn, ...)
 end
 
 -- Adds the item level line to a unit tooltip when the module allows it.
-local function OnTooltipSetUnit(tooltip)
-	if tooltip ~= GameTooltip then
-		return
-	end
-	if not addon:IsFeatureActive("tooltip", "showAverage") then
-		return
-	end
+-- The entire body runs inside pcall (ported from Khesyc_iLvl): any remaining
+-- taint or unexpected error is silently swallowed rather than flooding BugGrabber.
+local function OnTooltipSetUnitInner(tooltip)
+	if tooltip ~= GameTooltip then return end
+	if not addon:IsFeatureActive("tooltip", "showAverage") then return end
 
 	local _, unit = tooltip:GetUnit()
-	if not unit then
-		return
-	end
+	if not unit then return end
+
 	-- UnitIsPlayer is the first unit query: if it errors the unit is a secret
-	-- value (instanced content), so bail out. If it succeeds the unit is plain
-	-- and the remaining unit API calls below are safe to use directly.
-	if not safeUnitCall(UnitIsPlayer, unit) then
-		return
-	end
+	-- value (instanced content), so bail out.
+	if not safeUnitCall(UnitIsPlayer, unit) then return end
 
 	local ilvl
 	if UnitIsUnit(unit, "player") then
-		-- Our own gear is always known locally — no inspect needed.
 		_, ilvl = addon:GetItemLevels()
 	else
 		local guid = UnitGUID(unit)
 		ilvl = guid and ilvlCache[guid]
 		-- No cached value yet: request an inspect for the next hover.
-		if not ilvl and guid and CanInspect(unit) and not InCombatLockdown() then
+		if not ilvl and guid and safeUnitCall(CanInspect, unit) and not InCombatLockdown() then
 			pendingUnit, pendingGUID = unit, guid
-			NotifyInspect(unit)
+			safeUnitCall(NotifyInspect, unit)
 		end
 	end
 
@@ -62,7 +55,11 @@ local function OnTooltipSetUnit(tooltip)
 		tooltip:AddLine(" ")
 		tooltip:AddLine("Item Level: ...", 0.6, 0.6, 0.6)
 	end
-	tooltip:Show() -- re-fit the tooltip to the added line
+	tooltip:Show()
+end
+
+local function OnTooltipSetUnit(tooltip)
+	pcall(OnTooltipSetUnitInner, tooltip)
 end
 
 -- INSPECT_READY: cache the freshly inspected unit's item level and, if the
@@ -73,12 +70,19 @@ listener:SetScript("OnEvent", function(_, _, guid)
 	if not pendingUnit or guid ~= pendingGUID then
 		return
 	end
-	if UnitGUID(pendingUnit) == pendingGUID then
-		local ilvl = C_PaperDollInfo.GetInspectItemLevel(pendingUnit)
-		if ilvl and ilvl > 0 then
-			ilvlCache[pendingGUID] = ilvl
-			local _, ttUnit = GameTooltip:GetUnit()
-			if ttUnit and safeUnitCall(UnitGUID, ttUnit) == pendingGUID then
+	-- guid == pendingGUID already confirmed above; no need to re-query UnitGUID
+	-- (which returns a secret string on tainted units inside instanced content).
+	local ilvl = safeUnitCall(C_PaperDollInfo.GetInspectItemLevel, pendingUnit)
+	if ilvl and ilvl > 0 then
+		ilvlCache[pendingGUID] = ilvl
+		local _, ttUnit = GameTooltip:GetUnit()
+		if ttUnit then
+			-- The comparison itself can taint-error if UnitGUID returns a secret
+			-- string, so wrap the whole expression in pcall.
+			local ok, same = pcall(function()
+				return safeUnitCall(UnitGUID, ttUnit) == pendingGUID
+			end)
+			if ok and same then
 				GameTooltip:SetUnit(ttUnit)
 			end
 		end

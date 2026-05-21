@@ -1,11 +1,22 @@
 -- InspectFrame.lua
 -- Module: shows the equipped item level of an inspected character above their
--- weapon slots on the inspect frame, plus per-slot item level overlays.
+-- weapon slots on the inspect frame, plus per-slot item level overlays and
+-- enchant/gem indicators.
 
 local addonName, addon = ...
 
 local display
-local slotOverlays = {}  -- button -> FontString
+local slotOverlays    = {}  -- button -> FontString (ilvl number)
+local enchantOverlays = {}  -- button -> { enchLabel, gemLabel }
+
+-- Same outward-anchor rule as CharacterFrame for weapon slots.
+local WEAPON_ANCHOR = { [16] = "LEFT", [17] = "RIGHT" }
+
+local function GetAnchorForButton(button)
+	local slotID = button:GetID()
+	if WEAPON_ANCHOR[slotID] then return WEAPON_ANCHOR[slotID] end
+	return button.IsLeftSide and "RIGHT" or "LEFT"
+end
 
 local function CreateDisplay()
 	if display then return end
@@ -14,15 +25,34 @@ end
 
 local function GetOrCreateSlotOverlay(button)
 	if slotOverlays[button] then return slotOverlays[button] end
-	local fs = addon:CreateSlotOverlay(button)
+	local fs = addon:CreateSlotOverlay(button, nil)
 	slotOverlays[button] = fs
 	return fs
 end
 
+local function GetOrCreateEnchantOverlay(button)
+	if enchantOverlays[button] then return enchantOverlays[button] end
+	local e, g = addon:CreateEnchantGemOverlay(button)
+	enchantOverlays[button] = { e, g }
+	return enchantOverlays[button]
+end
+
 local function HideAllSlotOverlays()
-	for _, fs in pairs(slotOverlays) do
-		fs:Hide()
+	for _, fs in pairs(slotOverlays) do fs:Hide() end
+	for _, labels in pairs(enchantOverlays) do
+		labels[1]:Hide()
+		labels[2]:Hide()
 	end
+end
+
+local function UpdateEnchantGemOverlay(button)
+	local labels = GetOrCreateEnchantOverlay(button)
+	local slotID = button:GetID()
+	local unit = InspectFrame and InspectFrame.unit
+	local itemLink = unit and slotID >= 1 and slotID <= 19
+		and GetInventoryItemLink(unit, slotID)
+	addon:RefreshEnchantGemOverlay(labels[1], labels[2], itemLink, slotID,
+		addon:IsFeatureActive("inspect", "showEnchants"))
 end
 
 local function UpdateSlotButton(button)
@@ -31,11 +61,18 @@ local function UpdateSlotButton(button)
 	local unit = InspectFrame and InspectFrame.unit
 	if not unit or not UnitExists(unit) then
 		overlay:Hide()
+		if enchantOverlays[button] then
+			enchantOverlays[button][1]:Hide()
+			enchantOverlays[button][2]:Hide()
+		end
 		return
 	end
 	local slotID = button:GetID()
-	local itemLink = slotID and slotID >= 1 and GetInventoryItemLink(unit, slotID)
+	local itemLink = slotID >= 1 and GetInventoryItemLink(unit, slotID)
+	local anchor = addon:IsFeatureActive("inspect", "slotPositionOutside") and GetAnchorForButton(button) or nil
+	addon:RepositionSlotOverlay(overlay, anchor)
 	addon:RefreshSlotOverlay(overlay, itemLink, active)
+	UpdateEnchantGemOverlay(button)
 end
 
 local function UpdateDisplay()
@@ -79,8 +116,10 @@ addon:RegisterModule({
 	name        = "Осмотр персонажа",
 	description = "Настройки для окна осмотра персонажа",
 	settings = {
-		{ key = "showAverage", label = "Показывать средний уровень предметов",        default = true },
-		{ key = "showSlots",   label = "Показывать уровень предмета на предмете экипировки", default = true },
+		{ key = "showAverage",        label = "Показывать средний уровень предметов",                    default = true },
+		{ key = "showSlots",          label = "Показывать уровень предмета на слотах экипировки",        default = true },
+		{ key = "slotPositionOutside", label = "Выносить уровень предмета за пределы слота",             default = true },
+		{ key = "showEnchants",       label = "Показывать наличие гемов и энчантов на слотах",           default = true },
 	},
 	refresh = UpdateAll,
 })
@@ -110,10 +149,13 @@ local function SetupInspectUI()
 	if InspectFrame:IsShown() then
 		OnInspectShow()
 	end
-	-- Fires for every inspect paper doll slot button update.
 	hooksecurefunc("InspectPaperDollItemSlotButton_Update", function(button)
 		if not addon:IsModuleEnabled("inspect") then
-			if slotOverlays[button] then slotOverlays[button]:Hide() end
+			if slotOverlays[button]    then slotOverlays[button]:Hide() end
+			if enchantOverlays[button] then
+				enchantOverlays[button][1]:Hide()
+				enchantOverlays[button][2]:Hide()
+			end
 			return
 		end
 		UpdateSlotButton(button)

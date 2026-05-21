@@ -140,18 +140,136 @@ addon.EQUIPMENT_SLOT_NAMES = {
 	"Trinket0Slot", "Trinket1Slot", "MainHandSlot", "SecondaryHandSlot",
 }
 
--- Creates a FontString overlay centred at the bottom of an equipment slot button.
+-- Creates a FontString overlay on an equipment slot button.
+-- anchor controls which side of the slot the number floats toward:
+--   "RIGHT" — text appears to the right of the slot icon (left-column slots, inward).
+--   "LEFT"  — text appears to the left  of the slot icon (right-column slots, inward).
+--   nil     — centered at the bottom of the slot icon (legacy default).
 -- An intermediate Frame child is used so our text renders above Blizzard's own
 -- overlays (item count, unusable tint, etc.) which share the OVERLAY draw layer.
-function addon:CreateSlotOverlay(button)
+function addon:CreateSlotOverlay(button, anchor)
 	local host = CreateFrame("Frame", nil, button)
 	host:SetAllPoints()
 	host:SetFrameLevel(button:GetFrameLevel() + 1)
 	local fs = host:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
-	fs:SetPoint("BOTTOM", host, "BOTTOM", 0, 2)
 	local fontFile = fs:GetFont() or STANDARD_TEXT_FONT
 	fs:SetFont(fontFile, 13, "OUTLINE")
+	if anchor == "RIGHT" then
+		fs:SetPoint("LEFT", host, "RIGHT", 8, 0)
+	elseif anchor == "LEFT" then
+		fs:SetPoint("RIGHT", host, "LEFT", -8, 0)
+	else
+		fs:SetPoint("BOTTOM", host, "BOTTOM", 0, 2)
+	end
 	return fs
+end
+
+-- Repositions a slot overlay FontString (created by CreateSlotOverlay) to the
+-- given anchor side. Call this before every show so live setting changes take
+-- effect without recreating the overlay.
+function addon:RepositionSlotOverlay(fs, anchor)
+	fs:ClearAllPoints()
+	local host = fs:GetParent()
+	if anchor == "RIGHT" then
+		fs:SetPoint("LEFT", host, "RIGHT", 8, 0)
+	elseif anchor == "LEFT" then
+		fs:SetPoint("RIGHT", host, "LEFT", -8, 0)
+	else
+		fs:SetPoint("BOTTOM", host, "BOTTOM", 0, 2)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Enchant / gem slot metadata and overlay helpers (Midnight 12.0.x)
+-- Shared between CharacterFrame and InspectFrame modules.
+--------------------------------------------------------------------------------
+
+-- Inventory slot IDs that require enchants in Midnight 12.0.x.
+addon.ENCHANT_SLOTS = {
+	[1]=true, [3]=true, [5]=true,  [7]=true,  [8]=true,
+	[11]=true, [12]=true, [16]=true, [17]=true,
+}
+-- Inventory slot IDs that can have gem sockets in Midnight 12.0.x.
+addon.GEM_SLOTS = {
+	[1]=true, [2]=true, [6]=true, [9]=true, [11]=true, [12]=true,
+}
+
+-- Returns the enchant ID from an item link, or nil if no enchant is applied.
+-- Midnight 12.0.x colon-split layout:
+--   1=|cffCOLOR|Hitem  2=itemID  3=<internal>  4=enchantID  5=gem1  6=gem2  7=gem3
+function addon:GetEnchantID(itemLink)
+	local enchID = select(4, strsplit(":", itemLink))
+	return (enchID and enchID ~= "" and enchID ~= "0") and tonumber(enchID) or nil
+end
+
+-- Returns (filledGems, emptySocketCount) for an item link.
+function addon:GetGemCounts(itemLink)
+	local g1, g2, g3 = select(5, strsplit(":", itemLink))
+	local filled = 0
+	if g1 and g1 ~= "" and g1 ~= "0" then filled = filled + 1 end
+	if g2 and g2 ~= "" and g2 ~= "0" then filled = filled + 1 end
+	if g3 and g3 ~= "" and g3 ~= "0" then filled = filled + 1 end
+	local empty = 0
+	local stats = C_Item.GetItemStats(itemLink)
+	if stats then
+		for k, v in pairs(stats) do
+			if k:match("^EMPTY_SOCKET_") then empty = empty + (v or 0) end
+		end
+	end
+	return filled, empty
+end
+
+-- Creates the "E" (enchant) and "G" (gem) FontStrings for a slot button.
+-- Returns enchLabel, gemLabel — both initially hidden.
+function addon:CreateEnchantGemOverlay(button)
+	local host = CreateFrame("Frame", nil, button)
+	host:SetAllPoints()
+	host:SetFrameLevel(button:GetFrameLevel() + 2)
+	local enchLabel = host:CreateFontString(nil, "OVERLAY")
+	enchLabel:SetFont(STANDARD_TEXT_FONT, 9, "OUTLINE")
+	enchLabel:SetPoint("TOPLEFT", host, "TOPLEFT", 1, -1)
+	local gemLabel = host:CreateFontString(nil, "OVERLAY")
+	gemLabel:SetFont(STANDARD_TEXT_FONT, 9, "OUTLINE")
+	gemLabel:SetPoint("TOPRIGHT", host, "TOPRIGHT", -1, -1)
+	enchLabel:Hide()
+	gemLabel:Hide()
+	return enchLabel, gemLabel
+end
+
+-- Updates enchLabel / gemLabel for the given item link and slot ID.
+-- active: whether the feature toggle is on.
+function addon:RefreshEnchantGemOverlay(enchLabel, gemLabel, itemLink, slotID, active)
+	if not active or not itemLink then
+		enchLabel:Hide()
+		gemLabel:Hide()
+		return
+	end
+	if self.ENCHANT_SLOTS[slotID] then
+		local invType = select(9, GetItemInfo(itemLink))
+		if invType ~= "INVTYPE_SHIELD" and invType ~= "INVTYPE_HOLDABLE" then
+			local hasEnchant = self:GetEnchantID(itemLink) ~= nil
+			enchLabel:SetText("E")
+			enchLabel:SetTextColor(hasEnchant and 0.12 or 1, hasEnchant and 1 or 0, 0)
+			enchLabel:Show()
+		else
+			enchLabel:Hide()
+		end
+	else
+		enchLabel:Hide()
+	end
+	if self.GEM_SLOTS[slotID] then
+		local filled, empty = self:GetGemCounts(itemLink)
+		if filled + empty > 0 then
+			gemLabel:SetText("G")
+			-- Check filled first: green if at least one gem is socketed.
+			gemLabel:SetTextColor(filled >= 1 and 0.12 or 1, filled >= 1 and 1 or 0, 0)
+			gemLabel:Show()
+		else
+			gemLabel:Hide()
+		end
+	else
+		gemLabel:Hide()
+	end
 end
 
 -- Updates `overlay` with the item level from `itemLink`, coloured by quality.
@@ -221,6 +339,6 @@ SlashCmdList["BLITZEDITEMLEVEL"] = function()
 	if addon.OpenSettings then
 		addon:OpenSettings()
 	else
-		addon:Print("settings window is not available.")
+		addon:Print("Settings window is not available.")
 	end
 end
